@@ -1,0 +1,162 @@
+from database.supabase_client import get_supabase_client
+
+
+class MarketplaceService:
+    """
+    Handles marketplace-related database operations.
+
+    This class is responsible for:
+    - Getting active products
+    - Searching products
+    - Getting store offers for a product
+    - Counting how many stores offer a product
+
+    The class keeps database operations outside app.py
+    so the Streamlit interface stays easier to understand.
+    """
+
+    def __init__(self):
+        """
+        Creates a MarketplaceService object.
+
+        The object stores the Supabase connection so all
+        marketplace database operations can use it.
+        """
+        self.supabase = get_supabase_client()
+
+    def get_products(self):
+        """
+        Gets all active products.
+
+        Returns:
+            list: Active products ordered alphabetically.
+        """
+
+        response = (
+            self.supabase
+            .table("products")
+            .select("*")
+            .eq("is_active", True)
+            .order("product_name")
+            .execute()
+        )
+
+        return response.data
+
+    def search_products(self, search_term):
+        """
+        Searches active products.
+
+        The search checks the product name.
+
+        Args:
+            search_term (str): Text entered by the customer.
+
+        Returns:
+            list: Products matching the search.
+        """
+
+        response = (
+            self.supabase
+            .table("products")
+            .select("*")
+            .eq("is_active", True)
+            .ilike("product_name", f"%{search_term}%")
+            .order("product_name")
+            .execute()
+        )
+
+        return response.data
+
+    def get_product_listings(self, product_id):
+        """
+        Gets all store offers for a product.
+
+        IMPORTANT:
+        Out-of-stock listings are still returned.
+
+        This is intentional because Konztruq is also a
+        price-checking application. A customer should still
+        be able to see the price of a product even when a
+        hardware store currently has zero stock.
+
+        A listing is only excluded when the store has
+        disabled the listing through is_available.
+
+        Args:
+            product_id (str): ID of the product.
+
+        Returns:
+            list: Store listings for the product.
+        """
+
+        response = (
+            self.supabase
+            .table("store_listings")
+            .select(
+                "listing_id, store_id, product_id, price, "
+                "stock_quantity, is_available, "
+                "hardware_stores(store_name, address)"
+            )
+            .eq("product_id", product_id)
+            .eq("is_available", True)
+            .order("price")
+            .execute()
+        )
+
+        return response.data
+
+    def get_store_count(self, product_id):
+        """
+        Counts how many hardware stores have a listing
+        for the selected product.
+
+        This count includes out-of-stock listings because
+        they are still valid price-checking information.
+
+        Args:
+            product_id (str): ID of the product.
+
+        Returns:
+            int: Number of stores offering the product.
+        """
+
+        listings = self.get_product_listings(product_id)
+
+        return len(listings)
+
+    def get_cheapest_listing(self, product_id):
+        """
+        Finds the cheapest store offer for a product.
+
+        This method is only used to identify and highlight
+        the cheapest price.
+
+        IMPORTANT:
+        The cheapest listing is NOT automatically added
+        to the customer's cart.
+
+        The customer must choose which store they want.
+
+        Args:
+            product_id (str): ID of the product.
+
+        Returns:
+            dict or None: Cheapest listing.
+        """
+
+        listings = self.get_product_listings(product_id)
+
+        available_listings = [
+            listing
+            for listing in listings
+            if listing["stock_quantity"] > 0
+        ]
+
+        if not available_listings:
+            return None
+
+        return min(
+            available_listings,
+            key=lambda listing: listing["price"]
+        )

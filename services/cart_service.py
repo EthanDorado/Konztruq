@@ -1,0 +1,458 @@
+from services.base_service import BaseService
+
+
+class CartService(BaseService):
+    """
+    Handles database operations related to shopping carts.
+
+    This service communicates with the Supabase 'carts'
+    and 'cart_items' tables.
+
+    The cart stores which store listings the customer selected
+    and how many units the customer wants to purchase.
+
+    Important rule:
+        The StoreListing in the cart is the customer's own choice.
+        This class never swaps it for a cheaper store.
+
+    OOP concept:
+        This class groups cart-related database operations
+        into one reusable service (encapsulation and abstraction).
+        The Streamlit pages call these methods and do not need
+        to know how Supabase works.
+    """
+
+    def __init__(self):
+        """
+        Creates a CartService with a Supabase connection.
+        """
+        super().__init__()
+
+    # ========================================================
+    # EXISTING METHODS
+    # ========================================================
+
+    def get_or_create_cart(self, customer_id):
+        """
+        Finds the customer's existing cart.
+
+        If the customer does not have a cart yet,
+        a new cart is created.
+
+        Args:
+            customer_id: ID of the customer's account.
+
+        Returns:
+            The customer's cart record.
+        """
+
+        response = (
+            self.supabase
+            .table("carts")
+            .select("*")
+            .eq("customer_id", customer_id)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            return response.data[0]
+
+        new_cart = (
+            self.supabase
+            .table("carts")
+            .insert({
+                "customer_id": customer_id
+            })
+            .select("*")
+            .execute()
+        )
+
+        if not new_cart.data:
+            raise Exception(
+                "Supabase did not return the newly created cart."
+            )
+
+        return new_cart.data[0]
+
+    def add_item(self, cart_id, listing_id, quantity):
+        """
+        Adds a store listing to the customer's cart.
+
+        If the same store listing already exists in the cart,
+        the existing quantity is increased.
+
+        If it does not exist, a new cart item is created.
+
+        A different store listing always becomes a separate
+        cart item (the unique_cart_listing constraint allows
+        one row per cart + listing).
+
+        Args:
+            cart_id: ID of the customer's cart.
+            listing_id: Store listing being purchased.
+            quantity: Quantity selected.
+
+        Returns:
+            The created or updated cart item.
+        """
+
+        # ----------------------------------------------------
+        # CHECK IF THIS LISTING ALREADY EXISTS IN THE CART
+        # ----------------------------------------------------
+
+        existing_item = (
+            self.supabase
+            .table("cart_items")
+            .select("*")
+            .eq("cart_id", cart_id)
+            .eq("listing_id", listing_id)
+            .limit(1)
+            .execute()
+        )
+
+        # ----------------------------------------------------
+        # EXISTING ITEM: INCREASE ITS QUANTITY
+        # ----------------------------------------------------
+
+        if existing_item.data:
+
+            cart_item = existing_item.data[0]
+            cart_item_id = cart_item["cart_item_id"]
+
+            current_quantity = int(cart_item["quantity"])
+            new_quantity = current_quantity + int(quantity)
+
+            # Step 1: Update the quantity.
+            # We do NOT rely on this call to return the row,
+            # because Supabase may return empty data for updates.
+            (
+                self.supabase
+                .table("cart_items")
+                .update({
+                    "quantity": new_quantity
+                })
+                .eq("cart_item_id", cart_item_id)
+                .execute()
+            )
+
+            # Step 2: Read the cart item again from the database.
+            refreshed_item = (
+                self.supabase
+                .table("cart_items")
+                .select("*")
+                .eq("cart_item_id", cart_item_id)
+                .limit(1)
+                .execute()
+            )
+
+            if not refreshed_item.data:
+                raise Exception(
+                    "The cart item could not be read after the update."
+                )
+
+            updated_item = refreshed_item.data[0]
+
+            # Step 3: Confirm the update really happened.
+            if int(updated_item["quantity"]) != new_quantity:
+                raise Exception(
+                    "The cart quantity was not updated in the database. "
+                    "Check the Row Level Security UPDATE policy "
+                    "for the cart_items table."
+                )
+
+            return updated_item
+
+        # ----------------------------------------------------
+        # NEW ITEM: CREATE A CART ITEM
+        # ----------------------------------------------------
+
+        response = (
+            self.supabase
+            .table("cart_items")
+            .insert({
+                "cart_id": cart_id,
+                "listing_id": listing_id,
+                "quantity": int(quantity)
+            })
+            .select("*")
+            .execute()
+        )
+
+        if not response.data:
+            raise Exception(
+                "Supabase did not return the newly created cart item."
+            )
+
+        return response.data[0]
+
+    def get_cart_items(self, cart_id):
+        """
+        Retrieves all items inside a customer's cart.
+
+        This returns the raw cart_items rows only
+        (cart_id, listing_id, quantity).
+        Use get_cart_details() when you need product names,
+        store names, and prices.
+
+        Args:
+            cart_id: ID of the customer's cart.
+
+        Returns:
+            List of cart items.
+        """
+
+        response = (
+            self.supabase
+            .table("cart_items")
+            .select("*")
+            .eq("cart_id", cart_id)
+            .execute()
+        )
+
+        return response.data
+
+    # ========================================================
+    # MILESTONE 3: CART REVIEW
+    # ========================================================
+
+    def get_cart_details(self, cart_id):
+        """
+        Gets every cart item together with its product, store,
+        price and stock information.
+
+        The price is read from the store listing the customer chose.
+        Nothing is stored in cart_items besides the quantity.
+
+        Each returned item is a dictionary with:
+            cart_item_id, listing_id, quantity,
+            product_name, unit, store_id, store_name, address,
+            price, stock_quantity, subtotal, problem
+
+        'problem' is None when the item is fine. Otherwise it is
+        a short message such as "Out of stock".
+
+        Args:
+            cart_id: ID of the customer's cart.
+
+        Returns:
+            list: Cart items with details.
+        """
+
+        response = (
+            self.supabase
+            .table("cart_items")
+            .select(
+                "cart_item_id, listing_id, quantity, "
+                "store_listings("
+                "price, stock_quantity, is_available, store_id, "
+                "products(product_name, unit), "
+                "hardware_stores(store_name, address)"
+                ")"
+            )
+            .eq("cart_id", cart_id)
+            .execute()
+        )
+
+        details = []
+
+        for row in response.data:
+
+            listing = row.get("store_listings")
+            quantity = int(row["quantity"])
+
+            # If the listing cannot be read (for example it was
+            # deleted), keep the item visible so the customer
+            # can remove it. Do not hide it silently.
+            if listing is None:
+                details.append({
+                    "cart_item_id": row["cart_item_id"],
+                    "listing_id": row["listing_id"],
+                    "quantity": quantity,
+                    "product_name": "(This listing is no longer available)",
+                    "unit": "unit",
+                    "store_id": None,
+                    "store_name": "Unknown store",
+                    "address": "",
+                    "price": 0.0,
+                    "stock_quantity": 0,
+                    "subtotal": 0.0,
+                    "problem": "This listing is no longer available. "
+                               "Please remove it."
+                })
+                continue
+
+            product = listing.get("products") or {}
+            store = listing.get("hardware_stores") or {}
+
+            price = float(listing["price"])
+            stock = int(listing["stock_quantity"])
+            is_available = bool(listing.get("is_available", True))
+
+            problem = None
+
+            if (not is_available) or stock <= 0:
+                problem = "Out of stock right now."
+            elif quantity > stock:
+                problem = (
+                    f"Only {stock} in stock. "
+                    f"Please lower the quantity."
+                )
+
+            details.append({
+                "cart_item_id": row["cart_item_id"],
+                "listing_id": row["listing_id"],
+                "quantity": quantity,
+                "product_name": product.get("product_name", "Unknown product"),
+                "unit": product.get("unit") or "unit",
+                "store_id": listing.get("store_id"),
+                "store_name": store.get("store_name", "Unknown store"),
+                "address": store.get("address") or "",
+                "price": price,
+                "stock_quantity": stock,
+                "subtotal": price * quantity,
+                "problem": problem
+            })
+
+        return details
+
+    def group_by_store(self, cart_items):
+        """
+        Groups cart items by hardware store.
+
+        This is what shows the customer that buying from several
+        hardware stores creates separate store groups.
+
+        Args:
+            cart_items (list): Result of get_cart_details().
+
+        Returns:
+            list: One dictionary per store with:
+                store_id, store_name, address, items, subtotal
+        """
+
+        groups = {}
+
+        for item in cart_items:
+
+            key = item["store_id"] or item["store_name"]
+
+            if key not in groups:
+                groups[key] = {
+                    "store_id": item["store_id"],
+                    "store_name": item["store_name"],
+                    "address": item["address"],
+                    "items": [],
+                    "subtotal": 0.0
+                }
+
+            groups[key]["items"].append(item)
+            groups[key]["subtotal"] += item["subtotal"]
+
+        group_list = list(groups.values())
+
+        group_list.sort(key=lambda group: group["store_name"])
+
+        for group in group_list:
+            group["items"].sort(key=lambda item: item["product_name"])
+
+        return group_list
+
+    def calculate_cart_total(self, cart_items):
+        """
+        Adds up the subtotals of all cart items.
+
+        Args:
+            cart_items (list): Result of get_cart_details().
+
+        Returns:
+            float: Total cart amount.
+        """
+
+        return sum(item["subtotal"] for item in cart_items)
+
+    def update_quantity(self, cart_item_id, quantity):
+        """
+        Sets a cart item to an exact quantity.
+
+        Unlike add_item(), this REPLACES the quantity.
+        It is used by the cart screen when the customer changes
+        the quantity.
+
+        Args:
+            cart_item_id: ID of the cart item.
+            quantity (int): New quantity. Must be 1 or more.
+
+        Returns:
+            The updated cart item.
+        """
+
+        quantity = int(quantity)
+
+        if quantity < 1:
+            raise ValueError("Quantity must be at least 1.")
+
+        (
+            self.supabase
+            .table("cart_items")
+            .update({"quantity": quantity})
+            .eq("cart_item_id", cart_item_id)
+            .execute()
+        )
+
+        # Read the row again to confirm the update really happened.
+        refreshed_item = (
+            self.supabase
+            .table("cart_items")
+            .select("*")
+            .eq("cart_item_id", cart_item_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not refreshed_item.data:
+            raise Exception("The cart item could not be found.")
+
+        updated_item = refreshed_item.data[0]
+
+        if int(updated_item["quantity"]) != quantity:
+            raise Exception(
+                "The cart quantity was not updated in the database. "
+                "Check the Row Level Security UPDATE policy "
+                "for the cart_items table."
+            )
+
+        return updated_item
+
+    def remove_item(self, cart_item_id):
+        """
+        Removes one item from the cart.
+
+        Args:
+            cart_item_id: ID of the cart item to remove.
+        """
+
+        (
+            self.supabase
+            .table("cart_items")
+            .delete()
+            .eq("cart_item_id", cart_item_id)
+            .execute()
+        )
+
+        # Check that the row is really gone.
+        still_there = (
+            self.supabase
+            .table("cart_items")
+            .select("cart_item_id")
+            .eq("cart_item_id", cart_item_id)
+            .limit(1)
+            .execute()
+        )
+
+        if still_there.data:
+            raise Exception(
+                "The item was not removed from the database. "
+                "Check the Row Level Security DELETE policy "
+                "for the cart_items table."
+            )

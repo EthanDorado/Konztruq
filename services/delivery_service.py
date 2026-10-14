@@ -1,0 +1,668 @@
+from services.base_service import BaseService
+from models.location import Location
+from models.vehicle_type import VehicleType
+
+
+class DeliveryService(BaseService):
+    """
+    Handles database operations for delivery bookings.
+
+    This service communicates with the Supabase 'vehicle_types',
+    'delivery_bookings', 'delivery_materials', 'order_items' and
+    'store_listings' tables.
+
+    What it is responsible for:
+        - Reading the vehicles a customer can book.
+        - Working out how heavy an order (or a group of cart items) is.
+        - Deciding which vehicles can carry it.
+        - Checking, before an order exists, that delivery is possible.
+        - Saving a delivery booking (with its map positions) and its
+          materials.
+        - Reading existing bookings.
+
+    Business rules:
+        - Only a delivery order can be booked, and only once
+          (the database also enforces one booking per order).
+        - The vehicle must be able to carry the whole order.
+        - The delivery location must be chosen on the map (it needs
+          coordinates) and must have an address text.
+        - The pickup location is the hardware store's address unless
+          another pickup Location is given (reserved for the future,
+          when customers will choose Point A themselves).
+        - The delivery fee is not calculated yet, so it is saved as 0
+          and shown to the customer as "To be quoted".
+
+    Why this class exists:
+        Delivery is a different responsibility from carts and orders.
+        Keeping it separate means delivery work cannot break them, and
+        the pages never talk to Supabase directly.
+
+    Relationship with other classes:
+        - Uses VehicleType to apply the "can this vehicle carry it?"
+          rule.
+        - Uses Location for the pickup and delivery points.
+        - Receives order dictionaries from OrderService
+          .get_customer_orders().
+
+    OOP concepts actually used:
+        - Encapsulation: all delivery database work is inside this
+          class, and _rollback_booking() is private by convention.
+        - Abstraction: the page calls create_booking() without seeing
+          the two inserts behind it.
+        - Composition: the service creates and uses VehicleType and
+          Location objects.
+        - Class constants and a static method for status texts.
+        Inheritance and polymorphism are not used because nothing here
+        needs them.
+
+    Attributes:
+        supabase: The Supabase connection used by every method.
+    """
+
+    # --------------------------------------------------------
+    # CLASS CONSTANTS
+    # --------------------------------------------------------
+
+    # Allowed values of delivery_bookings.status
+    # (matches the chk_delivery_status database rule).
+    STATUS_PENDING = "pending"
+    STATUS_SEARCHING_DRIVER = "searching_driver"
+    STATUS_DRIVER_ASSIGNED = "driver_assigned"
+    STATUS_PICKED_UP = "picked_up"
+    STATUS_IN_TRANSIT = "in_transit"
+    STATUS_DELIVERED = "delivered"
+    STATUS_CANCELLED = "cancelled"
+
+    STATUS_TEXT = {
+        STATUS_PENDING: "Booked (waiting to be processed)",
+        STATUS_SEARCHING_DRIVER: "Looking for a driver",
+        STATUS_DRIVER_ASSIGNED: "Driver assigned",
+        STATUS_PICKED_UP: "Materials picked up",
+        STATUS_IN_TRANSIT: "On the way",
+        STATUS_DELIVERED: "Delivered",
+        STATUS_CANCELLED: "Cancelled"
+    }
+
+    # A delivery address shorter than this is not a real address.
+    MIN_LOCATION_LENGTH = 10
+
+    # Coordinates are saved with this many decimals (about 10 cm).
+    COORDINATE_DECIMALS = 6
+
+    def __init__(self):
+        """
+        Creates a DeliveryService with a Supabase connection.
+        """
+        super().__init__()
+
+    # ========================================================
+    # VEHICLES AND WEIGHT
+    # ========================================================
+
+    def get_active_vehicle_types(self):
+        """
+        Gets every vehicle that customers can book,
+        from the smallest to the largest.
+
+        Returns:
+            list: VehicleType objects ordered by max_weight_kg.
+        """
+
+        response = (
+            self.supabase
+            .table("vehicle_types")
+            .select("*")
+            .eq("is_active", True)
+            .order("max_weight_kg")
+            .execute()
+        )
+
+        return [VehicleType.from_row(row) for row in response.data]
+
+    def get_order_materials(self, order_id):
+        """
+        Gets the materials of an order together with their weights.
+
+        The weight comes from products.weight_kg, multiplied by the
+        quantity that was ordered.
+
+        Each material is a dictionary with:
+            description, quantity, weight_per_unit, total_weight_kg
+
+        'total_weight_kg' is None when the product has no usable
+        weight. In that case the order cannot be booked.
+
+        Args:
+            order_id: ID of the order.
+
+        Returns:
+            list: The order's materials.
+        """
+
+        response = (
+            self.supabase
+            .table("order_items")
+            .select(
+                "order_item_id, quantity, "
+                "store_listings(products(product_name, weight_kg))"
+            )
+            .eq("order_id", order_id)
+            .execute()
+        )
+
+        materials = []
+
+        for row in response.data:
+
+            listing = row.get("store_listings") or {}
+            product = listing.get("products") or {}
+
+            quantity = int(row["quantity"])
+            weight = product.get("weight_kg")
+
+            weight_per_unit = None
+            total_weight = None
+
+            if weight is not None and float(weight) > 0:
+                weight_per_unit = float(weight)
+                total_weight = weight_per_unit * quantity
+
+            materials.append({
+                "description": product.get(
+                    "product_name",
+                    "(Unknown product)"
+                ),
+                "quantity": quantity,
+                "weight_per_unit": weight_per_unit,
+                "total_weight_kg": total_weight
+            })
+
+        materials.sort(key=lambda material: material["description"])
+
+        return materials
+
+    def calculate_total_weight(self, materials):
+        """
+        Adds up the weight of all materials.
+
+        Args:
+            materials (list): Result of get_order_materials().
+
+        Returns:
+            float or None: Total weight in kg, or None if there are no
+            materials or any material has no usable weight.
+        """
+
+        if not materials:
+            return None
+
+        if any(m["total_weight_kg"] is None for m in materials):
+            return None
+
+        return sum(m["total_weight_kg"] for m in materials)
+
+    def find_suitable_vehicles(self, vehicles, total_weight):
+        """
+        Keeps only the vehicles that can carry the given weight.
+
+        The vehicles stay in the same order (smallest first), so the
+        first vehicle in the result is the smallest one that fits.
+
+        Args:
+            vehicles (list): VehicleType objects.
+            total_weight (float): Total weight of the order in kg.
+
+        Returns:
+            list: VehicleType objects that can carry the order.
+        """
+
+        return [
+            vehicle
+            for vehicle in vehicles
+            if vehicle.can_carry(total_weight)
+        ]
+
+    def get_weights_for_listings(self, listing_ids):
+        """
+        Gets the weight of one unit for several store listings
+        in ONE query.
+
+        Used at checkout, before any order exists, to find out how
+        heavy the selected cart items are.
+
+        Args:
+            listing_ids (list): IDs of the store listings.
+
+        Returns:
+            dict: Maps listing_id to the weight of one unit in kg,
+            or to None when the weight is missing or not above zero.
+        """
+
+        if not listing_ids:
+            return {}
+
+        response = (
+            self.supabase
+            .table("store_listings")
+            .select("listing_id, products(weight_kg)")
+            .in_("listing_id", list(listing_ids))
+            .execute()
+        )
+
+        weights = {listing_id: None for listing_id in listing_ids}
+
+        for row in response.data:
+
+            product = row.get("products") or {}
+            weight = product.get("weight_kg")
+
+            if weight is not None and float(weight) > 0:
+                weights[row["listing_id"]] = float(weight)
+
+        return weights
+
+    def check_delivery_for_items(self, items, vehicles):
+        """
+        Checks, BEFORE an order exists, whether the selected cart items
+        of one store can be delivered by a single vehicle.
+
+        This prevents a customer from placing a delivery order that
+        could never be booked.
+
+        Args:
+            items (list): Cart item dictionaries of ONE store. Each one
+                needs 'listing_id', 'quantity' and 'product_name'.
+            vehicles (list): VehicleType objects, smallest first.
+
+        Returns:
+            dict: {
+                "ok": True or False,
+                "total_weight": weight in kg, or None if unknown,
+                "message": text explaining the problem, or None
+            }
+        """
+
+        if not vehicles:
+            return {
+                "ok": False,
+                "total_weight": None,
+                "message": "No delivery vehicles are available yet."
+            }
+
+        weights = self.get_weights_for_listings(
+            [item["listing_id"] for item in items]
+        )
+
+        total_weight = 0.0
+        missing = []
+
+        for item in items:
+
+            weight = weights.get(item["listing_id"])
+
+            if weight is None:
+                missing.append(item["product_name"])
+            else:
+                total_weight += weight * int(item["quantity"])
+
+        if missing:
+            return {
+                "ok": False,
+                "total_weight": None,
+                "message": (
+                    "Delivery is not available for this store because "
+                    "the weight of these products is missing: "
+                    + ", ".join(missing)
+                    + ". Choose Pickup or deselect them."
+                )
+            }
+
+        largest = vehicles[-1]
+
+        if not largest.can_carry(total_weight):
+            return {
+                "ok": False,
+                "total_weight": total_weight,
+                "message": (
+                    f"These items weigh {total_weight:,.1f} kg, but the "
+                    f"largest vehicle carries only "
+                    f"{largest.max_weight_kg:,.0f} kg. Choose Pickup, "
+                    f"lower the quantities, or deselect some items."
+                )
+            }
+
+        return {
+            "ok": True,
+            "total_weight": total_weight,
+            "message": None
+        }
+
+    # ========================================================
+    # CREATING A BOOKING
+    # ========================================================
+
+    def create_booking(
+        self,
+        order,
+        vehicle_type_id,
+        delivery_location,
+        materials,
+        pickup_location=None
+    ):
+        """
+        Creates the delivery booking for ONE delivery order.
+
+        Steps:
+            1. Validate everything (order, locations, weight, vehicle).
+            2. Insert one row into 'delivery_bookings'.
+            3. Insert one row per material into 'delivery_materials'.
+            4. If step 3 fails, delete the booking again so no half
+               booking is left behind.
+
+        The vehicle is checked again against the database here, so a
+        vehicle that is too small can never be booked even if the page
+        was changed.
+
+        Args:
+            order (dict): One order from OrderService
+                .get_customer_orders().
+            vehicle_type_id: ID of the vehicle the customer chose.
+            delivery_location (Location): Point B. Must have an address
+                text and map coordinates.
+            materials (list): Result of get_order_materials().
+            pickup_location (Location, optional): Point A. If it is not
+                given, the hardware store's address is used.
+
+        Returns:
+            dict: The created booking row.
+
+        Raises:
+            ValueError: If the information is not valid.
+            Exception: If Supabase did not save the booking.
+        """
+
+        # ----------------------------------------------------
+        # VALIDATION
+        # ----------------------------------------------------
+
+        if order["fulfillment_type"] != "delivery":
+            raise ValueError("Only delivery orders can be booked.")
+
+        if order["status"] != "pending":
+            raise ValueError(
+                "This order is no longer pending, so a delivery "
+                "cannot be booked for it."
+            )
+
+        if delivery_location is None or not delivery_location.has_coordinates():
+            raise ValueError(
+                "Please choose the delivery location on the map."
+            )
+
+        if len(delivery_location.address) < self.MIN_LOCATION_LENGTH:
+            raise ValueError(
+                "Please enter a complete delivery address or landmark "
+                f"(at least {self.MIN_LOCATION_LENGTH} characters)."
+            )
+
+        if pickup_location is None:
+            pickup_location = Location(order.get("address") or "")
+
+        if not pickup_location.address:
+            raise ValueError(
+                "The hardware store has no address on file, so a "
+                "pickup location cannot be set."
+            )
+
+        total_weight = self.calculate_total_weight(materials)
+
+        if total_weight is None:
+            raise ValueError(
+                "The weight of this order is unknown, so a vehicle "
+                "cannot be chosen."
+            )
+
+        # Read the chosen vehicle again from the database.
+        vehicle_response = (
+            self.supabase
+            .table("vehicle_types")
+            .select("*")
+            .eq("vehicle_type_id", vehicle_type_id)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+
+        if not vehicle_response.data:
+            raise ValueError("The chosen vehicle is not available.")
+
+        vehicle = VehicleType.from_row(vehicle_response.data[0])
+
+        if not vehicle.can_carry(total_weight):
+            raise ValueError(
+                f"{vehicle.vehicle_name} cannot carry "
+                f"{total_weight:,.1f} kg. Please choose a larger vehicle."
+            )
+
+        # Do not book the same order twice.
+        if self.get_bookings_for_orders([order["order_id"]]):
+            raise ValueError("This order already has a delivery booking.")
+
+        # ----------------------------------------------------
+        # INSERT THE BOOKING
+        # ----------------------------------------------------
+
+        try:
+            booking_response = (
+                self.supabase
+                .table("delivery_bookings")
+                .insert({
+                    "order_id": order["order_id"],
+                    "vehicle_type_id": vehicle.vehicle_type_id,
+                    "pickup_location": pickup_location.address,
+                    "delivery_location": delivery_location.address,
+                    "pickup_latitude": self._round_coordinate(
+                        pickup_location.latitude
+                    ),
+                    "pickup_longitude": self._round_coordinate(
+                        pickup_location.longitude
+                    ),
+                    "delivery_latitude": self._round_coordinate(
+                        delivery_location.latitude
+                    ),
+                    "delivery_longitude": self._round_coordinate(
+                        delivery_location.longitude
+                    ),
+                    "delivery_fee": 0,
+                    "status": self.STATUS_PENDING
+                })
+                .select("*")
+                .execute()
+            )
+
+        except Exception as error:
+            raise Exception(
+                f"The delivery could not be booked. "
+                f"It may already be booked. Details: {error}"
+            )
+
+        if not booking_response.data:
+            raise Exception(
+                "Supabase did not return the new booking. Check the "
+                "INSERT and SELECT policies on 'delivery_bookings'."
+            )
+
+        booking = booking_response.data[0]
+
+        # ----------------------------------------------------
+        # INSERT THE MATERIALS
+        # ----------------------------------------------------
+
+        material_rows = []
+
+        for material in materials:
+            material_rows.append({
+                "order_id": order["order_id"],
+                "description": material["description"],
+                "quantity": int(material["quantity"]),
+                "total_weight_kg": round(
+                    float(material["total_weight_kg"]), 2
+                )
+            })
+
+        try:
+            materials_response = (
+                self.supabase
+                .table("delivery_materials")
+                .insert(material_rows)
+                .select("*")
+                .execute()
+            )
+
+            if len(materials_response.data or []) != len(material_rows):
+                raise Exception(
+                    "Supabase did not confirm all delivery materials. "
+                    "Check the INSERT and SELECT policies on "
+                    "'delivery_materials'."
+                )
+
+        except Exception as error:
+            self._rollback_booking(order["order_id"])
+            raise Exception(
+                f"The delivery could not be saved and was cancelled. "
+                f"Details: {error}"
+            )
+
+        return booking
+
+    def _rollback_booking(self, order_id):
+        """
+        Best-effort cleanup when a booking could not be completed.
+
+        It deletes the booking row of the order. Errors are ignored
+        here because the original error is the one the customer needs
+        to see.
+
+        Args:
+            order_id: ID of the order whose booking is removed.
+        """
+
+        try:
+            (
+                self.supabase
+                .table("delivery_bookings")
+                .delete()
+                .eq("order_id", order_id)
+                .execute()
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _round_coordinate(value):
+        """
+        Rounds a coordinate before it is saved.
+
+        This is a static method because it does not need any object
+        data.
+
+        Args:
+            value (float or None): A latitude or longitude.
+
+        Returns:
+            float or None: The rounded value (None stays None).
+        """
+
+        if value is None:
+            return None
+
+        return round(float(value), DeliveryService.COORDINATE_DECIMALS)
+
+    # ========================================================
+    # READING BOOKINGS
+    # ========================================================
+
+    def get_bookings_for_orders(self, order_ids):
+        """
+        Gets the delivery bookings of several orders in ONE query.
+
+        Each booking is a dictionary with:
+            order_id, vehicle_name, max_weight_kg,
+            pickup (Location), delivery (Location),
+            delivery_fee, status, created_at
+
+        Args:
+            order_ids (list): IDs of the orders to look up.
+
+        Returns:
+            dict: Maps order_id to its booking. Orders without a
+            booking are not in the dictionary.
+        """
+
+        if not order_ids:
+            return {}
+
+        response = (
+            self.supabase
+            .table("delivery_bookings")
+            .select(
+                "order_id, pickup_location, delivery_location, "
+                "pickup_latitude, pickup_longitude, "
+                "delivery_latitude, delivery_longitude, "
+                "delivery_fee, status, created_at, "
+                "vehicle_types(vehicle_name, max_weight_kg)"
+            )
+            .in_("order_id", order_ids)
+            .execute()
+        )
+
+        bookings = {}
+
+        for row in response.data:
+
+            vehicle = row.get("vehicle_types") or {}
+
+            bookings[row["order_id"]] = {
+                "order_id": row["order_id"],
+                "vehicle_name": vehicle.get("vehicle_name", "Unknown vehicle"),
+                "max_weight_kg": vehicle.get("max_weight_kg"),
+                "pickup": Location(
+                    row["pickup_location"],
+                    row.get("pickup_latitude"),
+                    row.get("pickup_longitude")
+                ),
+                "delivery": Location(
+                    row["delivery_location"],
+                    row.get("delivery_latitude"),
+                    row.get("delivery_longitude")
+                ),
+                "delivery_fee": float(row["delivery_fee"]),
+                "status": row["status"],
+                "created_at": row["created_at"]
+            }
+
+        return bookings
+
+    # ========================================================
+    # DISPLAY HELPER
+    # ========================================================
+
+    @staticmethod
+    def get_status_text(status):
+        """
+        Turns a delivery status into a customer-friendly sentence.
+
+        This is a static method because it does not need any object
+        data. It only converts text.
+
+        Args:
+            status (str): The delivery booking status.
+
+        Returns:
+            str: Text to show the customer.
+        """
+
+        return DeliveryService.STATUS_TEXT.get(
+            status,
+            str(status).replace("_", " ").title()
+        )
