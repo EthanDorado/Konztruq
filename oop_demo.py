@@ -1,10 +1,7 @@
 """
 Konztruq - Four Pillars of OOP demo.
 
-Run it from the project folder:   python oop_demo.py
-
 It prints one example of each pillar from the real Konztruq code.
-It does NOT use the internet or the database.
 """
 
 import sys
