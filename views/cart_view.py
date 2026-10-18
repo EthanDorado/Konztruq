@@ -1,7 +1,7 @@
 import streamlit as st
 from html import escape
 
-from services.cart_service import CartService
+from controllers.cart_controller import CartService
 
 
 # ============================================================
@@ -109,7 +109,7 @@ def money(amount):
 # SERVICE
 # ============================================================
 
-cart_service = CartService()
+cart_controller = CartService()
 
 
 # ============================================================
@@ -127,8 +127,8 @@ st.markdown(
 # ============================================================
 
 try:
-    cart = cart_service.get_or_create_cart(TEST_CUSTOMER_ID)
-    cart_items = cart_service.get_cart_details(cart["cart_id"])
+    cart = cart_controller.get_or_create_cart(TEST_CUSTOMER_ID)
+    cart_items = cart_controller.get_cart_details(cart["cart_id"])
 
 except Exception as error:
     st.error(f"Could not load your cart: {error}")
@@ -136,7 +136,7 @@ except Exception as error:
 
 if not cart_items:
     st.info("Your cart is empty.")
-    st.page_link("pages/0_Materials.py", label="Go to Materials")
+    st.page_link("views/materials_view.py", label="Go to Materials")
     st.stop()
 
 
@@ -144,7 +144,7 @@ if not cart_items:
 # STORE GROUPS
 # ============================================================
 
-store_groups = cart_service.group_by_store(cart_items)
+store_groups = cart_controller.group_by_store(cart_items)
 
 if len(store_groups) > 1:
     st.caption(
@@ -225,7 +225,7 @@ for group in store_groups:
             if new_quantity != item["quantity"]:
 
                 try:
-                    cart_service.update_quantity(
+                    cart_controller.update_quantity(
                         item["cart_item_id"],
                         new_quantity
                     )
@@ -249,7 +249,7 @@ for group in store_groups:
                 ):
 
                     try:
-                        cart_service.remove_item(item["cart_item_id"])
+                        cart_controller.remove_item(item["cart_item_id"])
                         changed = True
 
                     except Exception as error:
@@ -273,11 +273,11 @@ for group in store_groups:
 # CART TOTAL
 # ============================================================
 
-cart_total = cart_service.calculate_cart_total(cart_items)
+cart_total = cart_controller.calculate_cart_total(cart_items)
 
 st.markdown(
     f'<div class="cart-total">TOTAL: {money(cart_total)}</div>',
     unsafe_allow_html=True
 )
 
-st.page_link("pages/2_Checkout.py", label="Proceed to Checkout")
+st.page_link("views/checkout_view.py", label="Proceed to Checkout")

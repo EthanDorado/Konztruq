@@ -2,8 +2,8 @@ import streamlit as st
 from html import escape
 
 from models.hardware_store import HardwareStore
-from services.cart_service import CartService
-from services.store_service import StoreService
+from controllers.cart_controller import CartService
+from controllers.store_controller import StoreService
 
 
 # ============================================================
@@ -21,10 +21,8 @@ TEST_CUSTOMER_ID = "8166242c-f6e7-4e8d-8353-e88e16a8022b"
 
 st.set_page_config(
     page_title="Hardware Stores - Konztruq",
-    page_icon="🏪",
     layout="wide"
 )
-
 
 # ============================================================
 # KONZTRUQ COLORS
@@ -154,8 +152,8 @@ def money(amount):
 # SERVICES
 # ============================================================
 
-store_service = StoreService()
-cart_service = CartService()
+store_controller = StoreService()
+cart_controller = CartService()
 
 
 # ============================================================
@@ -212,9 +210,9 @@ def add_listing_to_cart(listing_id, quantity, store_name):
     """
 
     try:
-        cart = cart_service.get_or_create_cart(TEST_CUSTOMER_ID)
+        cart = cart_controller.get_or_create_cart(TEST_CUSTOMER_ID)
 
-        cart_service.add_item(
+        cart_controller.add_item(
             cart_id=cart["cart_id"],
             listing_id=listing_id,
             quantity=quantity
@@ -544,7 +542,7 @@ def show_store_profile(hardware, location):
         for line in location.get_contact_lines():
             st.write(line)
 
-    st.page_link("pages/1_Cart.py", label="Go to my cart")
+    st.page_link("views/cart_view.py", label="Go to my cart")
 
     # ----------------------------------------------------
     # THIS STORE'S MATERIALS
@@ -559,7 +557,7 @@ def show_store_profile(hardware, location):
     )
 
     try:
-        materials = store_service.get_store_products(
+        materials = store_controller.get_store_products(
             location.store_id,
             search_text
         )
@@ -588,7 +586,7 @@ def show_store_profile(hardware, location):
 # ============================================================
 
 try:
-    directory = store_service.get_hardware_directory()
+    directory = store_controller.get_hardware_directory()
 
 except Exception as error:
     st.error(f"Could not load the hardware stores: {error}")

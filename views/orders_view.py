@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 
 from models.fulfillment import Fulfillment
-from services.cart_service import CartService
-from services.order_service import OrderService
-from services.delivery_service import DeliveryService
+from controllers.cart_controller import CartService
+from controllers.order_controller import OrderService
+from controllers.delivery_controller import DeliveryService
 
 
 # ============================================================
@@ -24,7 +24,6 @@ TEST_CUSTOMER_ID = "8166242c-f6e7-4e8d-8353-e88e16a8022b"
 
 st.set_page_config(
     page_title="My Orders - Konztruq",
-    page_icon="📦",
     layout="wide"
 )
 
@@ -179,9 +178,9 @@ def get_status_class(status):
 # SERVICES
 # ============================================================
 
-cart_service = CartService()
-order_service = OrderService()
-delivery_service = DeliveryService()
+cart_controller = CartService()
+order_controller = OrderService()
+delivery_controller = DeliveryService()
 
 
 def cancel_order_and_restore(order, return_items):
@@ -203,7 +202,7 @@ def cancel_order_and_restore(order, return_items):
     """
 
     try:
-        order_service.cancel_order(order["order_id"])
+        order_controller.cancel_order(order["order_id"])
 
     except Exception as error:
         return False, f"Could not cancel the order: {error}"
@@ -212,10 +211,10 @@ def cancel_order_and_restore(order, return_items):
         return True, "The order was cancelled."
 
     try:
-        cart = cart_service.get_or_create_cart(TEST_CUSTOMER_ID)
+        cart = cart_controller.get_or_create_cart(TEST_CUSTOMER_ID)
 
         for item in order["items"]:
-            cart_service.add_item(
+            cart_controller.add_item(
                 cart["cart_id"],
                 item["listing_id"],
                 item["quantity"]
@@ -246,14 +245,14 @@ st.markdown(
 # ============================================================
 
 try:
-    orders = order_service.get_customer_orders(TEST_CUSTOMER_ID)
+    orders = order_controller.get_customer_orders(TEST_CUSTOMER_ID)
 
 except Exception as error:
     st.error(f"Could not load your orders: {error}")
     st.stop()
 
 try:
-    bookings = delivery_service.get_bookings_for_orders(
+    bookings = delivery_controller.get_bookings_for_orders(
         [order["order_id"] for order in orders]
     )
 
@@ -282,11 +281,11 @@ if last_booked_order_id:
 
 if cancel_notice:
     st.info(cancel_notice)
-    st.page_link("pages/1_Cart.py", label="Go to my cart")
+    st.page_link("views/cart_view.py", label="Go to my cart")
 
 if not orders:
     st.info("You have no orders yet.")
-    st.page_link("pages/0_Materials.py", label="Go to Materials")
+    st.page_link("views/materials_view.py", label="Go to Materials")
     st.stop()
 
 # Orders that still need a vehicle booking. Each order's fulfillment
@@ -303,7 +302,7 @@ if waiting_orders:
         f"{len(waiting_orders)} delivery order(s) still need a "
         f"vehicle booking."
     )
-    st.page_link("pages/4_Book_Delivery.py", label="Book delivery now")
+    st.page_link("views/delivery_view.py", label="Book delivery now")
 
 
 # ============================================================
@@ -488,4 +487,4 @@ for order in orders:
                     else:
                         st.error(message)
 
-st.page_link("pages/0_Materials.py", label="Continue Shopping")
+st.page_link("views/materials_view.py", label="Continue Shopping")

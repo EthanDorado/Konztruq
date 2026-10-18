@@ -1,9 +1,9 @@
 import streamlit as st
 from html import escape
 
-from services.cart_service import CartService
-from services.order_service import OrderService
-from services.delivery_service import DeliveryService
+from controllers.cart_controller import CartService
+from controllers.order_controller import OrderService
+from controllers.delivery_controller import DeliveryService
 
 
 # ============================================================
@@ -111,9 +111,9 @@ def kg(value):
 # SERVICES
 # ============================================================
 
-cart_service = CartService()
-order_service = OrderService()
-delivery_service = DeliveryService()
+cart_controller = CartService()
+order_controller = OrderService()
+delivery_controller = DeliveryService()
 
 
 def place_orders(store_groups, fulfillment_choices, receipt_name):
@@ -151,7 +151,7 @@ def place_orders(store_groups, fulfillment_choices, receipt_name):
 
         # Step 1: create the order.
         try:
-            order = order_service.create_order(
+            order = order_controller.create_order(
                 TEST_CUSTOMER_ID,
                 receipt_name,
                 fulfillment_type,
@@ -167,7 +167,7 @@ def place_orders(store_groups, fulfillment_choices, receipt_name):
         # Step 2: remove ONLY this store's ordered items from the cart.
         try:
             for item in group["items"]:
-                cart_service.remove_item(item["cart_item_id"])
+                cart_controller.remove_item(item["cart_item_id"])
 
         except Exception as error:
             error_messages.append(
@@ -189,7 +189,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.page_link("pages/1_Cart.py", label="← Back to Cart")
+st.page_link("views/cart_view.py", label="← Back to Cart")
 
 
 # ============================================================
@@ -197,8 +197,8 @@ st.page_link("pages/1_Cart.py", label="← Back to Cart")
 # ============================================================
 
 try:
-    cart = cart_service.get_or_create_cart(TEST_CUSTOMER_ID)
-    cart_items = cart_service.get_cart_details(cart["cart_id"])
+    cart = cart_controller.get_or_create_cart(TEST_CUSTOMER_ID)
+    cart_items = cart_controller.get_cart_details(cart["cart_id"])
 
 except Exception as error:
     st.error(f"Could not load your cart: {error}")
@@ -206,13 +206,13 @@ except Exception as error:
 
 if not cart_items:
     st.info("Your cart is empty. Add items before checking out.")
-    st.page_link("pages/0_Materials.py", label="Go to Materials")
-    st.page_link("pages/3_My_Orders.py", label="View My Orders")
+    st.page_link("views/materials_view.py", label="Go to Materials")
+    st.page_link("views/orders_view.py", label="View My Orders")
     st.stop()
 
 # The vehicles are needed to check whether delivery is possible.
 try:
-    vehicles = delivery_service.get_active_vehicle_types()
+    vehicles = delivery_controller.get_active_vehicle_types()
 
 except Exception as error:
     st.error(f"Could not load the delivery vehicles: {error}")
@@ -253,7 +253,7 @@ st.caption(
     "its own receipt, and you choose Pickup or Delivery for each one."
 )
 
-store_groups = cart_service.group_by_store(cart_items)
+store_groups = cart_controller.group_by_store(cart_items)
 
 # Items the customer selected (these are the ones that will be ordered).
 selected_items = []
@@ -372,7 +372,7 @@ for group in store_groups:
             # Check NOW that one vehicle can carry these items, so the
             # customer never places a delivery order that cannot be booked.
             try:
-                delivery_check = delivery_service.check_delivery_for_items(
+                delivery_check = delivery_controller.check_delivery_for_items(
                     group_selected,
                     vehicles
                 )
@@ -398,9 +398,9 @@ for group in store_groups:
                 blocked_stores.append(group["store_name"])
 
 # Only the selected items are ordered and counted.
-selected_groups = cart_service.group_by_store(selected_items)
+selected_groups = cart_controller.group_by_store(selected_items)
 
-cart_total = cart_service.calculate_cart_total(selected_items)
+cart_total = cart_controller.calculate_cart_total(selected_items)
 
 st.markdown(
     f'<div class="cart-total">TOTAL (selected items): {money(cart_total)}</div>',
@@ -489,16 +489,16 @@ if place_order_clicked:
                 f"{len(created_orders)} order(s) were created. "
                 f"Some stores had a problem (see above)."
             )
-            st.page_link("pages/3_My_Orders.py", label="View My Orders")
+            st.page_link("views/orders_view.py", label="View My Orders")
 
             if has_delivery_order:
                 st.page_link(
-                    "pages/4_Book_Delivery.py",
+                    "views/delivery_view.py",
                     label="Book delivery"
                 )
 
         elif has_delivery_order:
-            st.switch_page("pages/4_Book_Delivery.py")
+            st.switch_page("views/delivery_view.py")
 
         else:
-            st.switch_page("pages/3_My_Orders.py")
+            st.switch_page("views/orders_view.py")

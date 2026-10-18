@@ -102,7 +102,7 @@ class Fulfillment(ABC):
         """
 
     @abstractmethod
-    def check_items(self, items, delivery_service, vehicles):
+    def check_items(self, items, delivery_controller, vehicles):
         """
         Checks whether this way of receiving the items is possible.
 
@@ -112,7 +112,7 @@ class Fulfillment(ABC):
 
         Args:
             items (list): The selected cart items of ONE store.
-            delivery_service: A DeliveryService object.
+            delivery_controller: A DeliveryService object.
             vehicles (list): VehicleType objects.
 
         Returns:
@@ -170,7 +170,7 @@ class PickupFulfillment(Fulfillment):
 
         return "You will pick this order up at the store."
 
-    def check_items(self, items, delivery_service, vehicles):
+    def check_items(self, items, delivery_controller, vehicles):
         """Pickup is always possible, so the check always passes."""
 
         return {"ok": True, "total_weight": None, "message": None}
@@ -215,7 +215,7 @@ class DeliveryFulfillment(Fulfillment):
             "the delivery location on a map."
         )
 
-    def check_items(self, items, delivery_service, vehicles):
+    def check_items(self, items, delivery_controller, vehicles):
         """
         Asks the DeliveryService whether one vehicle can carry the items.
 
@@ -224,7 +224,7 @@ class DeliveryFulfillment(Fulfillment):
         """
 
         try:
-            return delivery_service.check_delivery_for_items(items, vehicles)
+            return delivery_controller.check_delivery_for_items(items, vehicles)
 
         except Exception as error:
             return {

@@ -4,9 +4,9 @@ from streamlit_folium import st_folium
 from html import escape
 
 from models.location import Location
-from services.order_service import OrderService
-from services.delivery_service import DeliveryService
-from services.location_service import LocationService
+from controllers.order_controller import OrderService
+from controllers.delivery_controller import DeliveryService
+from controllers.location_controller import LocationService
 
 
 # ============================================================
@@ -24,7 +24,6 @@ TEST_CUSTOMER_ID = "8166242c-f6e7-4e8d-8353-e88e16a8022b"
 
 st.set_page_config(
     page_title="Book Delivery - Konztruq",
-    page_icon="🚚",
     layout="wide"
 )
 
@@ -101,9 +100,9 @@ def kg(value):
 # SERVICES
 # ============================================================
 
-order_service = OrderService()
-delivery_service = DeliveryService()
-location_service = LocationService()
+order_controller = OrderService()
+delivery_controller = DeliveryService()
+location_controller = LocationService()
 
 
 def show_map(center, zoom, pin, key):
@@ -170,13 +169,13 @@ def show_booking_card(order, vehicles):
     order_ref = str(order_id)[:8].upper()
 
     try:
-        materials = delivery_service.get_order_materials(order_id)
+        materials = delivery_controller.get_order_materials(order_id)
 
     except Exception as error:
         st.error(f"Could not load the order materials: {error}")
         return
 
-    total_weight = delivery_service.calculate_total_weight(materials)
+    total_weight = delivery_controller.calculate_total_weight(materials)
 
     booked = False
 
@@ -241,7 +240,7 @@ def show_booking_card(order, vehicles):
         # VEHICLES THAT CAN CARRY THE ORDER
         # ----------------------------------------------------
 
-        suitable = delivery_service.find_suitable_vehicles(
+        suitable = delivery_controller.find_suitable_vehicles(
             vehicles,
             total_weight
         )
@@ -328,7 +327,7 @@ def show_booking_card(order, vehicles):
             st.session_state[last_search_key] = search_text
 
             with st.spinner("Searching..."):
-                found_place = location_service.search_place(search_text)
+                found_place = location_controller.search_place(search_text)
 
             if found_place is None:
                 st.warning(
@@ -377,7 +376,7 @@ def show_booking_card(order, vehicles):
             if is_new_pin:
 
                 with st.spinner("Looking up the address..."):
-                    address = location_service.reverse_geocode(
+                    address = location_controller.reverse_geocode(
                         clicked_lat,
                         clicked_lng
                     )
@@ -435,7 +434,7 @@ def show_booking_card(order, vehicles):
         ):
 
             try:
-                delivery_service.create_booking(
+                delivery_controller.create_booking(
                     order,
                     selected_vehicle_id,
                     Location(delivery_address, pin.latitude, pin.longitude),
@@ -449,7 +448,7 @@ def show_booking_card(order, vehicles):
     # Leave the page AFTER the try/except, outside the card.
     if booked:
         st.session_state.last_booked_order_id = order_id
-        st.switch_page("pages/3_My_Orders.py")
+        st.switch_page("views/orders_view.py")
 
 
 # ============================================================
@@ -461,7 +460,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.page_link("pages/3_My_Orders.py", label="← My Orders")
+st.page_link("views/orders_view.py", label="← My Orders")
 
 
 # ============================================================
@@ -469,13 +468,13 @@ st.page_link("pages/3_My_Orders.py", label="← My Orders")
 # ============================================================
 
 try:
-    orders = order_service.get_customer_orders(TEST_CUSTOMER_ID)
+    orders = order_controller.get_customer_orders(TEST_CUSTOMER_ID)
 
-    bookings = delivery_service.get_bookings_for_orders(
+    bookings = delivery_controller.get_bookings_for_orders(
         [order["order_id"] for order in orders]
     )
 
-    vehicles = delivery_service.get_active_vehicle_types()
+    vehicles = delivery_controller.get_active_vehicle_types()
 
 except Exception as error:
     st.error(f"Could not load your delivery information: {error}")
@@ -495,7 +494,7 @@ waiting_orders = [
 
 if not waiting_orders:
     st.info("You have no delivery orders waiting for a vehicle booking.")
-    st.page_link("pages/0_Materials.py", label="Go to Materials")
+    st.page_link("views/materials_view.py", label="Go to Materials")
     st.stop()
 
 if not vehicles:

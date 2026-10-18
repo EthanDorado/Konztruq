@@ -1,8 +1,8 @@
 import streamlit as st
 from html import escape
 
-from services.marketplace_service import MarketplaceService
-from services.cart_service import CartService
+from controllers.marketplace_controller import MarketplaceService
+from controllers.cart_controller import CartService
 
 
 # ============================================================
@@ -19,7 +19,6 @@ TEST_CUSTOMER_ID = "8166242c-f6e7-4e8d-8353-e88e16a8022b"
 
 st.set_page_config(
     page_title="Konztruq Marketplace",
-    page_icon="🏗️",
     layout="wide"
 )
 
@@ -145,7 +144,7 @@ st.markdown(
 # ============================================================
 
 marketplace = MarketplaceService()
-cart_service = CartService()
+cart_controller = CartService()
 
 
 # ============================================================
@@ -289,9 +288,9 @@ def add_listing_to_cart(listing_id, quantity, store_name):
     """
 
     try:
-        cart = cart_service.get_or_create_cart(TEST_CUSTOMER_ID)
+        cart = cart_controller.get_or_create_cart(TEST_CUSTOMER_ID)
 
-        cart_service.add_item(
+        cart_controller.add_item(
             cart_id=cart["cart_id"],
             listing_id=listing_id,
             quantity=quantity
