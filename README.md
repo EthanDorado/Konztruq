@@ -1,41 +1,55 @@
 # Konztruq
 
-Konztruq is a customer-focused construction-materials marketplace and delivery booking system, built as a Python OOP course project.
+Konztruq is a customer-focused construction materials marketplace and delivery booking system built with Python and Streamlit for an OOP course project.
 
-Customers compare material prices across hardware stores, buy by pickup or delivery, and book a vehicle for delivery by choosing the drop-off location on a map.
+Customers can compare material prices across hardware stores, add their chosen offers to a cart, place orders for pickup, and book vehicle delivery by selecting a drop-off location on a map.
 
-## Main features
+## Main Features
 
-1. **Price comparison and Add to Cart** - search a material, see every store's price and stock side by side, and add the store you choose to the cart. The cheapest in-stock offer is highlighted but never picked automatically.
-2. **Order for Pickup** - choose which cart items to buy, enter a Receipt Name, and pick Pickup. One order and one receipt are created per hardware store.
-3. **Vehicle booking with map delivery** - for delivery orders, the app weighs the materials, shows only the vehicles that can carry the load, and saves the delivery location picked on an interactive map.
+1. **Price Comparison and Add to Cart** - Search for construction materials, compare prices and stock across hardware stores, and add the offer from the store you choose. The cheapest in-stock offer may be highlighted, but it is never selected automatically.
 
-Also included: a Hardware Stores tab with store profiles, ratings, and branches; cancelling pending orders; and sold-out items that stay visible for price checking.
+2. **Order for Pickup** - Select cart items, enter a receipt name, and choose pickup. Orders and receipts are organized by hardware store.
+
+3. **Vehicle Booking for Delivery** - Choose delivery details and a drop-off location on an interactive map. The system can check vehicle capacity against the material weight when the relevant feature is available.
+
+Other features include a Hardware Stores page with store profiles and branches, pending-order cancellation, and sold-out products that remain visible for price comparison.
 
 ## Technology
 
-Python 3, Streamlit, Supabase (PostgreSQL), folium with OpenStreetMap, geopy, python-dotenv.
+* Python 3
+* Streamlit
+* Supabase (PostgreSQL)
+* Folium and OpenStreetMap
+* Geopy
+* python-dotenv
 
-## Python OOP in this project
+## Python OOP in This Project
 
-| Pillar | Where to find it |
-|---|---|
-| Encapsulation | `models/vehicle_type.py` (a vehicle keeps its weight limit and `can_carry()` together), `models/location.py` |
-| Abstraction | `services/order_service.py` (`create_order()` hides the database steps), `models/fulfillment.py` (abstract class) |
-| Inheritance | `services/base_service.py` is the parent of the Cart, Order, Delivery, Marketplace, and Store services; `PickupFulfillment` and `DeliveryFulfillment` inherit from `Fulfillment` |
-| Polymorphism | `models/fulfillment.py` (Pickup and Delivery answer the same methods differently), used in `pages/3_My_Orders.py` |
+| Pillar        | Where to Find It                                                                                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Encapsulation | `models/vehicle_type.py` and `models/location.py` keep related data and validation behavior together.                                                                                                    |
+| Abstraction   | `services/order_service.py` provides order-related methods that hide database operations; `models/fulfillment.py` defines the fulfillment abstraction.                                                   |
+| Inheritance   | `services/base_service.py` provides shared behavior to service classes, if they inherit from it in the current implementation. `PickupFulfillment` and `DeliveryFulfillment` inherit from `Fulfillment`. |
+| Polymorphism  | `PickupFulfillment` and `DeliveryFulfillment` implement common methods with different behavior, as defined in `models/fulfillment.py`.                                                                   |
 
-## Project structure
+The `oop_demo.py` script provides examples of the four OOP pillars using project classes.
+
+## Project Structure
 
 ```text
-Hardware_Stores.py   main Streamlit page
-pages/               Materials, Cart, Checkout, My Orders, Book Delivery
-services/            business logic and database access (one class per job)
-models/              domain classes (VehicleType, Location, Fulfillment, HardwareStore)
-database/            Supabase connection
-oop_demo.py          demonstration of the four OOP pillars
+Konztruq/
+├── app.py                  Main Streamlit entry point and navigation
+├── models/                 Domain classes and data models
+├── views/                  Customer-facing Streamlit pages
+├── controllers/            Coordinates page actions and application logic
+├── services/               Business logic and database operations
+├── database/               Supabase connection
+└── oop_demo.py             OOP demonstration script
 ```
 
-## Current limits
+## Current Limitations
 
-A test customer is used instead of real login, the delivery fee is shown as "To be quoted", stock is not reduced when an order is placed, and store ratings are sample data.
+* A test customer is used instead of a complete real-user login system.
+* Delivery fees may be displayed as "To be quoted."
+* Stock may not be reduced automatically when an order is placed.
+* Store ratings use sample data.
