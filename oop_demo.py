@@ -15,10 +15,10 @@ from models.fulfillment import (
     PickupFulfillment,
     DeliveryFulfillment
 )
-from services.cart_service import CartService
-from services.order_service import OrderService
-from services.delivery_service import DeliveryService
-from services.marketplace_service import MarketplaceService
+from controllers.cart_controller import CartService
+from controllers.order_controller import OrderService
+from controllers.delivery_controller import DeliveryService
+from controllers.marketplace_controller import MarketplaceService
 
 
 def title(text):
