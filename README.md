@@ -28,8 +28,8 @@ Other features include a Hardware Stores page with store profiles and branches, 
 | Pillar        | Where to Find It                                                                                                                                                                                         |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Encapsulation | `models/vehicle_type.py` and `models/location.py` keep related data and validation behavior together.                                                                                                    |
-| Abstraction   | `services/order_service.py` provides order-related methods that hide database operations; `models/fulfillment.py` defines the fulfillment abstraction.                                                   |
-| Inheritance   | `services/base_service.py` provides shared behavior to service classes, if they inherit from it in the current implementation. `PickupFulfillment` and `DeliveryFulfillment` inherit from `Fulfillment`. |
+| Abstraction   | `services/order_controller.py` provides order-related methods that hide database operations; `models/fulfillment.py` defines the fulfillment abstraction.                                                   |
+| Inheritance   | `services/base_controller.py` provides shared behavior to service classes, if they inherit from it in the current implementation. `PickupFulfillment` and `DeliveryFulfillment` inherit from `Fulfillment`. |
 | Polymorphism  | `PickupFulfillment` and `DeliveryFulfillment` implement common methods with different behavior, as defined in `models/fulfillment.py`.                                                                   |
 
 The `oop_demo.py` script provides examples of the four OOP pillars using project classes.
@@ -42,7 +42,6 @@ Konztruq/
 ├── models/                 Domain classes and data models
 ├── views/                  Customer-facing Streamlit pages
 ├── controllers/            Coordinates page actions and application logic
-├── services/               Business logic and database operations
 ├── database/               Supabase connection
 └── oop_demo.py             OOP demonstration script
 ```
